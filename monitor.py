@@ -81,6 +81,8 @@ def load_config():
         config = {}
     webhook = os.environ.get('DISCORD_WEBHOOK_URL') or config.get('webhook_url')
     if not webhook:
+        if os.environ.get('GITHUB_ACTIONS') == 'true':
+            raise RuntimeError('Add the DISCORD_WEBHOOK_URL repository secret before running this workflow')
         print('Paste your Discord webhook URL below (input is hidden).')
         webhook = getpass.getpass('Webhook URL: ').strip()
     if not re.fullmatch(r'https://(?:discord\.com|discordapp\.com)/api(?:/v\d+)?/webhooks/\d+/[A-Za-z0-9_-]+', webhook):
@@ -104,6 +106,9 @@ def check_once(webhook):
     elif rank > previous['rank']:
         notify(webhook, f'🔻 **Leaderboard drop**\n{PLAYER}: **#{previous["rank"]} → #{rank}**\nLost {rank - previous["rank"]} position(s). LP: **{row.get("lp", "?")}**\n<{PAGE}>')
     # Update only after successful delivery. A failed alert is retried next check.
+    if previous and rank == previous['rank'] and row.get('lp') == previous.get('lp'):
+        print(f'Unchanged: {PLAYER}: #{rank}, LP {row.get("lp", "?")}', flush=True)
+        return
     save_json(STATE, {'player': PLAYER, 'rank': rank, 'lp': row.get('lp'),
                       'checked_at': dt.datetime.now(dt.timezone.utc).isoformat()})
     print(f'{dt.datetime.now():%H:%M:%S}  {PLAYER}: #{rank}, LP {row.get("lp", "?")}', flush=True)
@@ -113,11 +118,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--check', action='store_true', help='Read current rank without webhook or state changes')
     parser.add_argument('--test', action='store_true', help='Send one Discord test message')
+    parser.add_argument('--once', action='store_true', help='Check and update state once, then exit (GitHub Actions)')
     args = parser.parse_args()
     if args.check:
         print(json.dumps(fetch_player(), indent=2))
         return
     webhook, interval = load_config()
+    if args.once:
+        check_once(webhook)
+        return
     if args.test:
         notify(webhook, f'✅ Discord test successful. Ready to monitor **{PLAYER}**.')
         print('Test message sent.')
